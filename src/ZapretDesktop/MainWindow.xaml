@@ -1,0 +1,84 @@
+<Window x:Class="ZapretDesktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Zapret Desktop"
+        Width="950" Height="710" MinWidth="765" MinHeight="520" WindowStartupLocation="CenterScreen"
+        Background="{StaticResource Canvas}" Foreground="{StaticResource Ink}" FontFamily="Inter, Segoe UI"
+        UseLayoutRounding="True">
+  <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+    <Grid Margin="32,23,32,27">
+      <Grid.RowDefinitions>
+        <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/>
+      </Grid.RowDefinitions>
+      <Grid.ColumnDefinitions>
+        <ColumnDefinition Width="1.6*"/><ColumnDefinition Width="16"/><ColumnDefinition Width="*"/>
+      </Grid.ColumnDefinitions>
+      <StackPanel Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,0,0,22">
+        <Border Background="#263D31" BorderBrush="#486455" BorderThickness="1" CornerRadius="9" Width="44" Height="44" Margin="0,0,13,0">
+          <Path Width="25" Height="25" Stretch="Uniform" Data="M 1,14 L 7,14 10,5 15,21 18,12 25,12"
+                Stroke="{StaticResource Accent}" StrokeThickness="2" StrokeStartLineCap="Round"
+                StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+        </Border>
+        <StackPanel VerticalAlignment="Center">
+          <TextBlock FontSize="24" FontWeight="SemiBold" Text="Zapret Desktop"/>
+          <TextBlock Style="{StaticResource Hint}" Text="Discord и YouTube"/>
+        </StackPanel>
+      </StackPanel>
+      <Border Grid.Row="1" Grid.Column="0" Style="{StaticResource Card}">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Section}" Text="Подключение"/>
+          <DockPanel Margin="0,16,0,4">
+            <Ellipse x:Name="StatusDot" DockPanel.Dock="Left" Fill="#82958B" Width="10" Height="10" Margin="0,0,9,0"/>
+            <TextBlock x:Name="StatusTitle" FontSize="25" FontWeight="SemiBold" AutomationProperties.LiveSetting="Polite"/>
+          </DockPanel>
+          <TextBlock x:Name="StatusText" Style="{StaticResource Hint}" MinHeight="42" Margin="0,0,0,12"/>
+          <Button x:Name="PrimaryButton" Style="{StaticResource Primary}" Click="PrimaryClick"/>
+          <ProgressBar x:Name="Progress" Height="3" Margin="0,8,0,0" Visibility="Hidden"
+                       Background="{StaticResource Inset}" Foreground="{StaticResource Accent}"/>
+          <TextBlock Style="{StaticResource Hint}" Text="Подбирать для" Margin="0,12,0,5"/>
+          <ComboBox x:Name="TargetBox" AutomationProperties.Name="Сервисы для подбора" SelectionChanged="TargetChanged">
+            <ComboBoxItem Content="Discord и YouTube"/><ComboBoxItem Content="Discord"/><ComboBoxItem Content="YouTube"/>
+          </ComboBox>
+          <TextBlock Style="{StaticResource Hint}" Text="Запустить пресет вручную" Margin="0,13,0,5"/>
+          <Grid>
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+            <ComboBox x:Name="PresetBox" Margin="0,0,8,0" AutomationProperties.Name="Пресет"/>
+            <Button x:Name="ManualButton" Grid.Column="1" Click="ManualClick" Content="Включить"/>
+          </Grid>
+        </StackPanel>
+      </Border>
+      <StackPanel Grid.Row="1" Grid.Column="2">
+        <Border Style="{StaticResource Card}">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="Движок Zapret"/>
+            <TextBlock x:Name="EngineVersion" FontSize="21" FontWeight="SemiBold" Foreground="{StaticResource Accent}" Margin="0,8,0,5"/>
+            <TextBlock x:Name="UpdateText" Style="{StaticResource Hint}" MinHeight="38" Margin="0,0,0,12"
+                       AutomationProperties.LiveSetting="Polite"/>
+            <Button x:Name="UpdateButton" HorizontalAlignment="Left" Click="UpdateClick"/>
+            <Button x:Name="ReleaseButton" Content="Открыть страницу релизов" HorizontalAlignment="Left"
+                    Click="ReleaseClick" Margin="0,8,0,0"/>
+          </StackPanel>
+        </Border>
+        <Border Style="{StaticResource Card}" Margin="0,14,0,0">
+          <StackPanel>
+            <TextBlock Style="{StaticResource Section}" Text="Настройки" Margin="0,0,0,8"/>
+            <CheckBox x:Name="AutostartBox" Click="AutostartClick">
+              <TextBlock Text="Открывать при входе в Windows"/>
+            </CheckBox>
+            <CheckBox x:Name="AutoUpdateBox" Click="AutoUpdateClick">
+              <TextBlock Text="Проверять обновления автоматически"/>
+            </CheckBox>
+            <TextBlock Style="{StaticResource Hint}" Text="Для установки нужно подтверждение." Margin="0,6,0,0"/>
+          </StackPanel>
+        </Border>
+      </StackPanel>
+      <Border Grid.Row="2" Grid.ColumnSpan="3" Style="{StaticResource Card}" Margin="0,15,0,0" Padding="19,14">
+        <StackPanel>
+          <TextBlock Style="{StaticResource Section}" Text="Журнал" Margin="0,0,0,6"/>
+          <TextBox x:Name="Activity" Height="66" BorderThickness="0" Background="{StaticResource Surface}"
+                   Foreground="{StaticResource Muted}" FontFamily="Consolas, Segoe UI" FontSize="12"
+                   TextWrapping="Wrap" IsReadOnly="True" VerticalScrollBarVisibility="Auto"
+                   AutomationProperties.Name="Журнал действий"/>
+        </StackPanel>
+      </Border>
+    </Grid>
+  </ScrollViewer>
+</Window>
