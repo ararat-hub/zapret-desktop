@@ -8,6 +8,7 @@
     <SolidColorBrush x:Key="Ink" Color="#F1F7F2"/>
     <SolidColorBrush x:Key="Muted" Color="#ACBDB3"/>
     <SolidColorBrush x:Key="Accent" Color="#AAEFC0"/>
+    <SolidColorBrush x:Key="Attention" Color="#FFD297"/>
     <Style TargetType="TextBlock">
       <Setter Property="TextWrapping" Value="Wrap"/>
     </Style>
@@ -26,6 +27,13 @@
       <Setter Property="BorderThickness" Value="1"/>
       <Setter Property="CornerRadius" Value="14"/>
       <Setter Property="Padding" Value="22"/>
+    </Style>
+    <Style x:Key="ServiceCard" TargetType="Border">
+      <Setter Property="Background" Value="{StaticResource Inset}"/>
+      <Setter Property="BorderBrush" Value="{StaticResource Line}"/>
+      <Setter Property="BorderThickness" Value="1"/>
+      <Setter Property="CornerRadius" Value="8"/>
+      <Setter Property="Padding" Value="11,8"/>
     </Style>
     <Style TargetType="Button">
       <Setter Property="Background" Value="#26382E"/>

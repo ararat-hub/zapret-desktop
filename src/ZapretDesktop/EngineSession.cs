@@ -18,7 +18,8 @@ internal sealed class EngineSession : IDisposable
         try
         {
             if (running.Length != 0)
-                throw new InvalidOperationException("Уже запущен winws.exe. Остановите его в той программе, которая его запустила.");
+                throw new InvalidOperationException("Уже работает другой winws.exe. Если это старая служба Zapret, " +
+                    "временно остановите службу zapret в «Службах» Windows и повторите подбор.");
         }
         finally
         {

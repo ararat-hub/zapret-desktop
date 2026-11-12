@@ -1,6 +1,6 @@
 <Window x:Class="ZapretDesktop.MainWindow" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" Title="Zapret Desktop"
-        Width="950" Height="710" MinWidth="765" MinHeight="520" WindowStartupLocation="CenterScreen"
+        Width="950" Height="746" MinWidth="765" MinHeight="540" WindowStartupLocation="CenterScreen"
         Background="{StaticResource Canvas}" Foreground="{StaticResource Ink}" FontFamily="Inter, Segoe UI"
         UseLayoutRounding="True">
   <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
@@ -29,7 +29,22 @@
             <Ellipse x:Name="StatusDot" DockPanel.Dock="Left" Fill="#82958B" Width="10" Height="10" Margin="0,0,9,0"/>
             <TextBlock x:Name="StatusTitle" FontSize="25" FontWeight="SemiBold" AutomationProperties.LiveSetting="Polite"/>
           </DockPanel>
-          <TextBlock x:Name="StatusText" Style="{StaticResource Hint}" MinHeight="42" Margin="0,0,0,12"/>
+          <TextBlock x:Name="StatusText" Style="{StaticResource Hint}" MinHeight="38" Margin="0,0,0,10"/>
+          <Grid Margin="0,0,0,12">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="8"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border Style="{StaticResource ServiceCard}">
+              <StackPanel>
+                <TextBlock FontWeight="SemiBold" Text="Discord"/>
+                <TextBlock x:Name="DiscordCheck" Style="{StaticResource Hint}" Text="Ожидает проверки"/>
+              </StackPanel>
+            </Border>
+            <Border Grid.Column="2" Style="{StaticResource ServiceCard}">
+              <StackPanel>
+                <TextBlock FontWeight="SemiBold" Text="YouTube"/>
+                <TextBlock x:Name="YouTubeCheck" Style="{StaticResource Hint}" Text="Ожидает проверки"/>
+              </StackPanel>
+            </Border>
+          </Grid>
           <Button x:Name="PrimaryButton" Style="{StaticResource Primary}" Click="PrimaryClick"/>
           <ProgressBar x:Name="Progress" Height="3" Margin="0,8,0,0" Visibility="Hidden"
                        Background="{StaticResource Inset}" Foreground="{StaticResource Accent}"/>
@@ -53,8 +68,12 @@
             <TextBlock x:Name="UpdateText" Style="{StaticResource Hint}" MinHeight="38" Margin="0,0,0,12"
                        AutomationProperties.LiveSetting="Polite"/>
             <Button x:Name="UpdateButton" HorizontalAlignment="Left" Click="UpdateClick"/>
-            <Button x:Name="ReleaseButton" Content="Открыть страницу релизов" HorizontalAlignment="Left"
-                    Click="ReleaseClick" Margin="0,8,0,0"/>
+            <Button x:Name="LocalEngineButton" Content="Выбрать локальную папку" Click="LocalEngineClick"
+                    HorizontalAlignment="Left" Margin="0,8,0,0"/>
+            <WrapPanel Margin="0,8,0,0">
+              <Button Content="Релизы" Click="ReleaseClick" Margin="0,0,8,0"/>
+              <Button x:Name="LicenseButton" Content="Лицензии" Click="LicenseClick"/>
+            </WrapPanel>
           </StackPanel>
         </Border>
         <Border Style="{StaticResource Card}" Margin="0,14,0,0">

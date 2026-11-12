@@ -8,5 +8,6 @@
   <ItemGroup>
     <Compile Include="../../src/ZapretDesktop/Releases.cs" Link="Releases.cs"/>
     <Compile Include="../../src/ZapretDesktop/EngineFiles.cs" Link="EngineFiles.cs"/>
+    <Compile Include="../../src/ZapretDesktop/EmbeddedEngine.cs" Link="EmbeddedEngine.cs"/>
   </ItemGroup>
 </Project>

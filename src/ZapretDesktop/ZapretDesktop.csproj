@@ -8,7 +8,13 @@
     <PlatformTarget>x64</PlatformTarget>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <AssemblyName>ZapretDesktop</AssemblyName>
-    <Version>0.1.0</Version>
+    <Version>0.2.0</Version>
     <Product>Zapret Desktop</Product>
   </PropertyGroup>
+  <ItemGroup Condition="'$(FlowsealArchive)' != ''">
+    <EmbeddedResource Include="$(FlowsealArchive)" LogicalName="ZapretDesktop.Flowseal.zip"/>
+    <EmbeddedResource Include="../../build/flowseal.json" LogicalName="ZapretDesktop.Flowseal.json"/>
+    <EmbeddedResource Include="$(ThirdPartyNotices)" LogicalName="ZapretDesktop.ThirdParty.txt"
+                      Condition="'$(ThirdPartyNotices)' != ''"/>
+  </ItemGroup>
 </Project>

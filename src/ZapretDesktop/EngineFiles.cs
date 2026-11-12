@@ -28,16 +28,16 @@ internal sealed class EngineStore(string directory)
         if (ReadHealthyEngine() is { } current && release.Version <= current.Version)
             return current;
 
-        byte[] bytes = await Releases.DownloadAsync(release, token);
+        byte[] bytes = EmbeddedEngine.TryRead(release) ?? await Releases.DownloadAsync(release, token);
         return await Task.Run(() => Commit(release, bytes, token), token);
     }
 
-    internal EngineFiles Commit(Release release, byte[] bytes, CancellationToken token)
+    internal EngineFiles Commit(Release release, byte[] bytes, CancellationToken token, bool replace = false)
     {
         Directory.CreateDirectory(directory);
         using var installLock = new FileStream(Path.Combine(directory, "install.lock"), FileMode.OpenOrCreate,
             FileAccess.ReadWrite, FileShare.None);
-        if (ReadHealthyEngine() is { } current && release.Version <= current.Version)
+        if (!replace && ReadHealthyEngine() is { } current && release.Version <= current.Version)
             return current;
 
         string staging = Path.Combine(directory, ".stage-" + Guid.NewGuid().ToString("N"));

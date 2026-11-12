@@ -19,6 +19,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer updateTimer = new() { Interval = TimeSpan.FromHours(4) };
     private readonly Queue<string> log = new();
     private readonly bool elevated;
+    private readonly Release? embedded = EmbeddedEngine.Release;
+    private readonly LocalEngine? local = LocalEngine.Discover();
     private CancellationTokenSource? operation;
     private EngineFiles? engine;
     private Release? offer;
@@ -33,6 +35,7 @@ public partial class MainWindow : Window
         using var identity = WindowsIdentity.GetCurrent();
         elevated = new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
         InitializeComponent();
+        LicenseButton.Visibility = embedded is null ? Visibility.Collapsed : Visibility.Visible;
         TargetBox.SelectedIndex = (int)preferences.Targets;
         AutoUpdateBox.IsChecked = preferences.AutoCheck;
         try { AutostartBox.IsChecked = Preferences.HasAutostart(); }
@@ -56,7 +59,8 @@ public partial class MainWindow : Window
         };
 
         SetStatus("Выключено", "Подберите пресет для своей сети или выберите его вручную.");
-        UpdateText.Text = "Обновления из официальных релизов Flowseal.";
+        UpdateText.Text = local is not null ? "Локальные файлы готовы к использованию." :
+            embedded is null ? "Обновления из официальных релизов Flowseal." : $"В комплекте Zapret {embedded.Tag}.";
         try { SetEngine(store.ReadCurrent()); }
         catch (Exception error)
         {
@@ -82,11 +86,19 @@ public partial class MainWindow : Window
         {
             ["--connect"] => RunAsync(SelectPresetAsync, search: true),
             ["--manual", var name] => RunAsync(token => StartManualAsync(name, token)),
+            ["--local-install" or "--local-connect", var path, var tag, var digest] =>
+                RunAsync(async token =>
+                {
+                    var snapshot = LocalEngine.ReadHandoff(path, tag, digest);
+                    await InstallLocalAsync(snapshot, args[0] == "--local-connect", token);
+                }, search: args[0] == "--local-connect"),
             ["--update" or "--install-connect", var tag, var digest]
                 when Releases.ParseVersion(tag) is not null && Releases.ValidHash(digest) =>
                 RunAsync(async token =>
                 {
-                    var release = await Releases.CheckAsync(token, tag);
+                    var release = embedded is { } bundled && bundled.Tag == tag &&
+                        string.Equals(bundled.Sha256, digest, StringComparison.OrdinalIgnoreCase)
+                        ? bundled : await Releases.CheckAsync(token, tag);
                     if (!string.Equals(release.Sha256, digest, StringComparison.OrdinalIgnoreCase))
                         throw new InvalidDataException("Архив релиза изменился. Подтвердите установку заново.");
                     await InstallAsync(release, token);
@@ -111,6 +123,7 @@ public partial class MainWindow : Window
                 session.Stop();
                 activePreset = null;
                 SetStatus("Выключено", "Подберите пресет для своей сети или выберите его вручную.");
+                ShowChecks(null);
                 Log("Подключение остановлено.");
                 return Task.CompletedTask;
             });
@@ -118,7 +131,12 @@ public partial class MainWindow : Window
         }
         if (engine is null)
         {
-            var release = offer ?? await CheckUpdatesAsync();
+            if (local is not null)
+            {
+                await ConfirmLocalAsync(local, connect: true);
+                return;
+            }
+            var release = embedded ?? offer ?? await CheckUpdatesAsync();
             if (release is not null && !closing)
                 await ConfirmInstallAsync(release, connect: true);
             return;
@@ -135,17 +153,75 @@ public partial class MainWindow : Window
 
     private async void UpdateClick(object sender, RoutedEventArgs e)
     {
-        if (offer is { } release)
+        if (AvailableUpdate is { } release)
             await ConfirmInstallAsync(release, connect: false);
         else
             await CheckUpdatesAsync();
+    }
+
+    private async void LocalEngineClick(object sender, RoutedEventArgs e)
+    {
+        var picker = new Microsoft.Win32.OpenFolderDialog { Title = "Выберите папку Zapret с service.bat и bin" };
+        if (local is not null)
+            picker.InitialDirectory = local.Root;
+        if (picker.ShowDialog(this) != true)
+            return;
+        try
+        {
+            var source = LocalEngine.Read(picker.FolderName) ??
+                throw new InvalidDataException("В этой папке не найдены service.bat, bin и пресеты Flowseal.");
+            await ConfirmLocalAsync(source, connect: false);
+        }
+        catch (Exception error)
+        {
+            UpdateText.Text = error.Message;
+            Report("Локальная папка", error);
+        }
+    }
+
+    private async Task ConfirmLocalAsync(LocalEngine source, bool connect)
+    {
+        if (MessageBox.Show(this, $"Использовать Zapret {source.Tag} из папки?\n{source.Root}\n\n" +
+            "Файлы будут скопированы в папку приложения для запуска с правами администратора.",
+            "Локальная копия Zapret", MessageBoxButton.YesNo, MessageBoxImage.Question,
+            MessageBoxResult.No) != MessageBoxResult.Yes)
+            return;
+
+        await RunAsync(async token =>
+        {
+            Log($"Читаем локальный Zapret {source.Tag}.");
+            var snapshot = await Task.Run(() => source.MakeArchive(token), token);
+            if (elevated)
+            {
+                await InstallLocalAsync(snapshot, connect, token);
+                return;
+            }
+            string path = LocalEngine.SaveHandoff(snapshot.Bytes);
+            EnsureElevated(connect ? "--local-connect" : "--local-install", path,
+                snapshot.Release.Tag, snapshot.Release.Sha256);
+        }, search: connect);
+    }
+
+    private async Task InstallLocalAsync((Release Release, byte[] Bytes) snapshot, bool connect, CancellationToken token)
+    {
+        UpdateText.Text = $"Копируем локальный Zapret {snapshot.Release.Tag}…";
+        var installed = await Task.Run(() => store.Commit(snapshot.Release, snapshot.Bytes, token, replace: true), token);
+        SetEngine(installed);
+        if (offer is { } pending && pending.Version <= installed.Version)
+            offer = null;
+        UpdateText.Text = $"Используется локальный Zapret {installed.Tag}.";
+        Log($"Движок {installed.Tag} импортирован из локальной папки.");
+        if (connect)
+            await SelectPresetAsync(token);
     }
 
     private async Task ConfirmInstallAsync(Release release, bool connect)
     {
         string title = engine is null ? "Установить движок Zapret?" : "Обновить движок Zapret?";
         string detail = activePreset is null ? "" : "\nАктивный пресет продолжит работать на текущей версии до остановки.";
-        if (MessageBox.Show(this, $"Скачать и установить Zapret {release.Tag} из релиза Flowseal?{detail}",
+        string source = release == embedded ? "из этого EXE" : "из релиза Flowseal";
+        string action = release == embedded ? "Установить" : "Скачать и установить";
+        if (MessageBox.Show(this, $"{action} Zapret {release.Tag} {source}?{detail}",
             title, MessageBoxButton.YesNo, MessageBoxImage.Question, MessageBoxResult.No) != MessageBoxResult.Yes)
             return;
 
@@ -168,17 +244,22 @@ public partial class MainWindow : Window
         try
         {
             var release = await Releases.CheckAsync(lifetime.Token);
-            offer = engine is null || release.Version > engine.Version ? release : null;
-            UpdateText.Text = offer is null
-                ? "Установлена актуальная версия."
-                : engine is null ? $"Доступна версия {release.Tag}." : $"Доступно обновление {release.Tag}.";
+            var currentVersion = engine?.Version ?? embedded?.Version;
+            offer = currentVersion is null || release.Version > currentVersion ? release : null;
+            UpdateText.Text = offer is not null
+                ? engine is null ? $"Доступна версия {release.Tag}." : $"Доступно обновление {release.Tag}."
+                : engine is not null ? "Установлена актуальная версия."
+                : local is not null ? "Локальные файлы готовы к использованию."
+                : "Актуальный пакет встроен. Готов к установке.";
             return offer;
         }
         catch (Exception error)
         {
             if (!closing)
             {
-                UpdateText.Text = "Не удалось проверить GitHub. Повторите позже.";
+                UpdateText.Text = engine is null && (local is not null || embedded is not null)
+                    ? "Установка доступна без GitHub."
+                    : "Не удалось проверить GitHub. Повторите позже.";
                 Report("Проверка обновлений", error);
             }
             return offer;
@@ -193,7 +274,7 @@ public partial class MainWindow : Window
 
     private async Task InstallAsync(Release release, CancellationToken token)
     {
-        Log($"Загружаем Zapret {release.Tag}.");
+        Log(release == embedded ? $"Распаковываем встроенный Zapret {release.Tag}." : $"Загружаем Zapret {release.Tag}.");
         UpdateText.Text = $"Устанавливаем версию {release.Tag}…";
         try
         {
@@ -215,39 +296,13 @@ public partial class MainWindow : Window
     private async Task SelectPresetAsync(CancellationToken token)
     {
         var current = engine ?? throw new InvalidOperationException("Сначала установите движок.");
-        EngineSession.EnsureNoOtherEngine();
-        var targets = preferences.Targets;
-        SetStatus("Подбор пресета", "Проверяем исходное соединение…");
-        var baseline = await Connectivity.CheckAsync(targets, token);
-        Log($"Без пресета · {baseline}");
-        var presets = current.Presets.OrderByDescending(preset => preset.Name == preferences.LastPreset).ToArray();
-
-        for (int index = 0; index < presets.Length; index++)
+        ShowChecks(null);
+        var match = await PresetSelection.FindAsync(current, session, preferences.Targets, preferences.LastPreset,
+            detail => SetStatus("Подбор пресета", detail), Log, ShowChecks, token);
+        if (match is { } selected)
         {
-            token.ThrowIfCancellationRequested();
-            var preset = presets[index];
-            SetStatus("Подбор пресета", $"{index + 1} из {presets.Length} · {preset.Name}");
-            try
-            {
-                await session.StartAsync(current, preset, token);
-            }
-            catch (Win32Exception) { throw; }
-            catch (InvalidOperationException error)
-            {
-                Log($"{preset.Name} · {error.Message}");
-                continue;
-            }
-
-            var result = await Connectivity.CheckAsync(targets, token);
-            if (result.Passed && session.IsRunning)
-                result = await Connectivity.CheckAsync(targets, token);
-            Log($"{preset.Name} · {result}");
-            if (result.Passed && session.IsRunning)
-            {
-                SetConnected(current, preset, $"HTTPS-проверки пройдены · {result}");
-                return;
-            }
-            session.Stop();
+            SetConnected(current, selected.Preset, "Проверки выбранных сервисов пройдены.");
+            return;
         }
         SetStatus("Пресет не найден", "Выберите один сервис, проверьте журнал или запустите пресет вручную.");
     }
@@ -257,12 +312,13 @@ public partial class MainWindow : Window
         var current = engine ?? throw new InvalidOperationException("Сначала установите движок.");
         var preset = current.Presets.FirstOrDefault(preset => preset.Name == name) ??
             throw new InvalidOperationException("Этот пресет отсутствует в установленной версии.");
+        ShowChecks(null);
         await session.StartAsync(current, preset, token);
         SetConnected(current, preset, "Пресет запущен вручную.");
         var result = await Connectivity.CheckAsync(preferences.Targets, token);
         if (session.IsRunning)
         {
-            SetStatus("Включено", $"{preset.Name} · Zapret {current.Tag}\nПроверка HTTPS · {result}", connected: true);
+            ShowChecks(result);
             Log($"{preset.Name} · {result}");
         }
     }
@@ -283,6 +339,7 @@ public partial class MainWindow : Window
         Log($"winws завершился с кодом {process.ExitCode}.");
         session.Stop();
         activePreset = null;
+        ShowChecks(null);
         SetStatus("Подключение остановлено", "winws завершился. Подберите пресет заново или проверьте журнал.");
         RenderControls();
     }
@@ -305,7 +362,10 @@ public partial class MainWindow : Window
                     try { session.Stop(); }
                     catch (Exception stopError) { Report("Остановка", stopError); }
                     if (cancellation.IsCancellationRequested)
+                    {
+                        ShowChecks(null);
                         SetStatus("Подбор отменён", "Можно начать подбор заново или выбрать пресет вручную.");
+                    }
                     else
                         SetStatus("Не удалось выполнить действие", error.Message);
                 }
@@ -364,11 +424,42 @@ public partial class MainWindow : Window
         catch (Exception error) { Report("Открытие страницы релизов", error); }
     }
 
+    private void LicenseClick(object sender, RoutedEventArgs e)
+    {
+        using var notice = typeof(MainWindow).Assembly.GetManifestResourceStream("ZapretDesktop.ThirdParty.txt");
+        if (notice is null)
+            return;
+        using var reader = new StreamReader(notice);
+        var dialog = new Window
+        {
+            Owner = this,
+            Title = "Лицензии компонентов Zapret Desktop",
+            WindowStartupLocation = WindowStartupLocation.CenterOwner,
+            Width = 740,
+            Height = 540,
+            Background = (Brush)FindResource("Canvas"),
+            Content = new TextBox
+            {
+                Margin = new Thickness(18),
+                Padding = new Thickness(12),
+                Background = (Brush)FindResource("Inset"),
+                Foreground = (Brush)FindResource("Ink"),
+                FontFamily = new FontFamily("Consolas, Segoe UI"),
+                TextWrapping = TextWrapping.Wrap,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                IsReadOnly = true,
+                Text = reader.ReadToEnd(),
+            },
+        };
+        dialog.ShowDialog();
+    }
+
     private void TargetChanged(object sender, SelectionChangedEventArgs e)
     {
         if (!ready || TargetBox.SelectedIndex < 0)
             return;
         preferences.Targets = (Targets)TargetBox.SelectedIndex;
+        ShowChecks(null);
         SavePreferences();
     }
 
@@ -399,7 +490,9 @@ public partial class MainWindow : Window
     private void SetEngine(EngineFiles? value)
     {
         engine = value;
-        EngineVersion.Text = value?.Tag ?? "Требуется установка";
+        EngineVersion.Text = value is not null ? $"Zapret {value.Tag}" :
+            local is not null ? $"Zapret {local.Tag} найден" :
+            embedded is not null ? $"Zapret {embedded.Tag} встроен" : "Требуется установка";
         var names = value?.Presets.Select(preset => preset.Name).ToArray() ?? [];
         PresetBox.ItemsSource = names;
         int saved = Array.IndexOf(names, preferences.LastPreset);
@@ -413,17 +506,35 @@ public partial class MainWindow : Window
         StatusDot.Fill = (Brush)FindResource(connected ? "Accent" : "Muted");
     }
 
+    private void ShowChecks(ProbeResult? result)
+    {
+        SetCheck(DiscordCheck, result?.Discord);
+        SetCheck(YouTubeCheck, result?.YouTube);
+    }
+
+    private void SetCheck(TextBlock text, EndpointCheck? check)
+    {
+        text.Text = check is null ? "Ожидает проверки" : check.Passed ? "Доступен" : "Ошибка проверки";
+        text.Foreground = (Brush)FindResource(check is null ? "Muted" : check.Passed ? "Accent" : "Attention");
+        text.ToolTip = check?.Detail;
+    }
+
+    private Release? AvailableUpdate => offer ??
+        (engine is not null && embedded is not null && embedded.Version > engine.Version ? embedded : null);
+
     private void RenderControls()
     {
         bool busy = operation is not null;
         bool connected = activePreset is not null;
         PrimaryButton.Content = searching ? "Отменить подбор" : connected ? "Остановить" :
             engine is null ? "Установить и подобрать" : "Подобрать и включить";
-        PrimaryButton.IsEnabled = searching || (!busy && (engine is not null || !checking));
+        PrimaryButton.IsEnabled = searching || (!busy &&
+            (engine is not null || local is not null || embedded is not null || !checking));
         TargetBox.IsEnabled = !busy && !connected;
         PresetBox.IsEnabled = ManualButton.IsEnabled = engine is not null && !busy && !connected;
         UpdateButton.IsEnabled = !busy && !checking;
-        UpdateButton.Content = offer is { } update ? $"Установить {update.Tag}" : "Проверить обновления";
+        LocalEngineButton.IsEnabled = !busy && !connected;
+        UpdateButton.Content = AvailableUpdate is { } update ? $"Установить {update.Tag}" : "Проверить обновления";
         Progress.IsIndeterminate = busy;
         Progress.Visibility = busy ? Visibility.Visible : Visibility.Hidden;
     }

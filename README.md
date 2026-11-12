@@ -1,18 +1,20 @@
 # Zapret Desktop
 
-Приложение Windows для подбора и запуска штатных пресетов [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube). Интерфейс на русском, написан на C# и WPF. Движок скачивается из официальных релизов Flowseal.
+Приложение Windows для подбора и запуска штатных пресетов [Flowseal/zapret-discord-youtube](https://github.com/Flowseal/zapret-discord-youtube). Интерфейс, движок Zapret, WinDivert и пресеты входят в один `ZapretDesktop.exe`. Встроенный пакет можно установить без доступа к GitHub.
 
-[Скачать готовую сборку для Windows x64](https://github.com/ararat-hub/zapret-desktop/raw/refs/heads/main/downloads/ZapretDesktop-win-x64.zip)
+[Скачать ZapretDesktop.exe для Windows x64](https://github.com/ararat-hub/zapret-desktop/raw/refs/heads/main/downloads/ZapretDesktop.exe)
 
 ## Первый запуск
 
 1. Нужны Windows 10/11 x64 и [.NET Desktop Runtime 10 x64](https://dotnet.microsoft.com/en-us/download/dotnet/10.0).
-2. Распакуйте сборку в постоянную папку и откройте **ZapretDesktop.exe**.
-3. Нажмите **Установить и подобрать**, согласитесь на загрузку указанной версии и подтвердите запрос Windows (UAC).
-4. Для следующих запусков выберите **Discord и YouTube**, **Discord** или **YouTube** и нажмите **Подобрать и включить**. Первый пресет, который дважды проходит HTTPS-проверку выбранных сервисов, остаётся включённым. Приложение запоминает его и проверяет первым в следующий раз.
+2. Сохраните **ZapretDesktop.exe** в постоянную папку и откройте его.
+3. Нажмите **Установить и подобрать**. Если приложение нашло уже установленный Zapret, подтвердите использование его файлов. Для портативной копии нажмите **Выбрать локальную папку** и укажите папку с `service.bat` и `bin`. При отсутствии локальной копии приложение предложит встроенный пакет. После подтверждения UAC нужные файлы будут скопированы в Program Files. Загрузка с GitHub для этих вариантов не требуется.
+4. Для следующих запусков выберите **Discord и YouTube**, **Discord** или **YouTube** и нажмите **Подобрать и включить**. Первый пресет, который дважды проходит сетевую проверку выбранных сервисов, остаётся включённым. Приложение запоминает его и проверяет первым в следующий раз.
 5. Чтобы выбрать пресет самостоятельно, используйте выпадающий список и кнопку **Включить**. **Остановить** и закрытие приложения завершают запущенный им процесс движка.
 
-HTTPS-проверка обращается к публичному адресу Discord Gateway и к YouTube. Для голосового чата Discord и воспроизведения видео проверьте работу в самих приложениях. Если подбор не проходит, в журнале виден результат для каждого сервиса. Если уже работает другой экземпляр winws, остановите его в исходной программе перед запуском Zapret Desktop.
+Для Discord проверяются публичный API и ответ Hello по WebSocket. Для YouTube проверяются сайт и загрузка обложки с CDN. Карточки сервисов показывают результат, а журнал содержит подробности по каждому пресету. Голосовой чат и воспроизведение видео проверяются в самих сервисах.
+
+Если старый Zapret запущен как служба, в «Службах» Windows временно остановите `zapret`, затем повторите подбор. Для возврата к старому Zapret остановите пресет в Zapret Desktop и снова запустите службу `zapret`.
 
 ## Обновления и автозапуск
 
@@ -27,17 +29,17 @@ HTTPS-проверка обращается к публичному адресу
 ~~~powershell
 dotnet build .\src\ZapretDesktop\ZapretDesktop.csproj -c Release
 dotnet run --project .\tests\ZapretDesktop.Checks\ZapretDesktop.Checks.csproj -c Release
-dotnet publish .\src\ZapretDesktop\ZapretDesktop.csproj -c Release -r win-x64 --self-contained false -p:PublishSingleFile=true -p:EnableSingleFileAnalyzer=false -p:DebugType=None -o .\artifacts\win-x64
+.\build\Publish.ps1
 ~~~
 
-Готовый файл появится в папке `artifacts\win-x64`. Сборка использует компоненты .NET SDK. Портативному EXE нужен Desktop Runtime 10. У этой сборки отсутствует цифровая подпись издателя.
+Готовый файл появится в папке `artifacts\win-x64`. Скрипт сборки проверяет SHA-256 архива по [манифесту пакета](build/flowseal.json) и встраивает официальный архив с лицензиями. Для запуска EXE нужен Desktop Runtime 10. У этой сборки отсутствует цифровая подпись издателя.
 
 ## Хранение и удаление
 
-Настройки текущего пользователя находятся в `%LOCALAPPDATA%\ZapretDesktop\settings.json`. Версии движка хранятся в `%ProgramFiles%\Zapret Desktop\engine`. Чтобы удалить оболочку, выключите автозапуск, закройте приложение и удалите распакованные файлы. Чтобы удалить скачанные версии движка, удалите его папку с правами администратора. Windows управляет загрузкой драйвера WinDivert.
+Настройки текущего пользователя находятся в `%LOCALAPPDATA%\ZapretDesktop\settings.json`. Версии движка хранятся в `%ProgramFiles%\Zapret Desktop\engine`. Чтобы удалить оболочку, выключите автозапуск, закройте приложение и удалите EXE. Чтобы удалить установленные версии движка, удалите его папку с правами администратора. Windows управляет загрузкой драйвера WinDivert.
 
 ## Код и лицензии
 
 - [Компоненты, сетевые запросы и авторизация](docs/architecture.md)
 - [MIT для кода оболочки](LICENSE)
-- [Лицензия движка Flowseal](https://github.com/Flowseal/zapret-discord-youtube/blob/1.10.4/LICENSE.txt) и [исходники WinDivert с лицензиями LGPLv3/GPLv2](https://github.com/basil00/WinDivert). Движок и драйвер входят в официальный архив Flowseal.
+- [Сторонние компоненты, лицензии и исходники](docs/third-party.md)
