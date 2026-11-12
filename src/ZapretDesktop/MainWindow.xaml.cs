@@ -22,6 +22,7 @@ public partial class MainWindow : Window
     private readonly Release? embedded = EmbeddedEngine.Release;
     private readonly LocalEngine? local = LocalEngine.Discover();
     private CancellationTokenSource? operation;
+    private TaskCompletionSource? operationFinished;
     private EngineFiles? engine;
     private Release? offer;
     private string? activePreset;
@@ -50,13 +51,7 @@ public partial class MainWindow : Window
             if (operation is null && preferences.AutoCheck)
                 await CheckUpdatesAsync();
         };
-        Closing += (_, _) =>
-        {
-            closing = true;
-            updateTimer.Stop();
-            lifetime.Cancel();
-            session.Dispose();
-        };
+        Closing += OnClosing;
 
         SetStatus("Выключено", "Подберите пресет для своей сети или выберите его вручную.");
         UpdateText.Text = local is not null ? "Локальные файлы готовы к использованию." :
@@ -116,15 +111,13 @@ public partial class MainWindow : Window
             operation?.Cancel();
             return;
         }
-        if (activePreset is not null)
+        if (activePreset is not null || session.HasPendingCleanup)
         {
             await RunAsync(_ =>
             {
-                session.Stop();
                 activePreset = null;
                 SetStatus("Выключено", "Подберите пресет для своей сети или выберите его вручную.");
                 ShowChecks(null);
-                Log("Подключение остановлено.");
                 return Task.CompletedTask;
             });
             return;
@@ -236,7 +229,7 @@ public partial class MainWindow : Window
 
     private async Task<Release?> CheckUpdatesAsync()
     {
-        if (checking || operation is not null)
+        if (checking || operation is not null || closing)
             return null;
         checking = true;
         UpdateText.Text = "Проверяем релизы Flowseal…";
@@ -297,8 +290,10 @@ public partial class MainWindow : Window
     {
         var current = engine ?? throw new InvalidOperationException("Сначала установите движок.");
         ShowChecks(null);
+        await SuspendLegacyServiceAsync(token);
         var match = await PresetSelection.FindAsync(current, session, preferences.Targets, preferences.LastPreset,
             detail => SetStatus("Подбор пресета", detail), Log, ShowChecks, token);
+        token.ThrowIfCancellationRequested();
         if (match is { } selected)
         {
             SetConnected(current, selected.Preset, "Проверки выбранных сервисов пройдены.");
@@ -313,6 +308,7 @@ public partial class MainWindow : Window
         var preset = current.Presets.FirstOrDefault(preset => preset.Name == name) ??
             throw new InvalidOperationException("Этот пресет отсутствует в установленной версии.");
         ShowChecks(null);
+        await SuspendLegacyServiceAsync(token);
         await session.StartAsync(current, preset, token);
         SetConnected(current, preset, "Пресет запущен вручную.");
         var result = await Connectivity.CheckAsync(preferences.Targets, token);
@@ -321,6 +317,13 @@ public partial class MainWindow : Window
             ShowChecks(result);
             Log($"{preset.Name} · {result}");
         }
+    }
+
+    private async Task SuspendLegacyServiceAsync(CancellationToken token)
+    {
+        SetStatus("Подготовка подключения", "Проверяем, запущена ли служба zapret…");
+        if (await session.SuspendLegacyServiceAsync(token))
+            Log("Служба zapret временно остановлена.");
     }
 
     private void SetConnected(EngineFiles current, Preset preset, string detail)
@@ -332,16 +335,69 @@ public partial class MainWindow : Window
         Log($"Запущен {preset.Name} · Zapret {current.Tag}.");
     }
 
-    private void OnEngineExit(Process process)
+    private async void OnEngineExit(Process process)
     {
         if (closing || !session.Owns(process) || activePreset is null)
             return;
         Log($"winws завершился с кодом {process.ExitCode}.");
-        session.Stop();
         activePreset = null;
         ShowChecks(null);
         SetStatus("Подключение остановлено", "winws завершился. Подберите пресет заново или проверьте журнал.");
+        await RunAsync(_ => Task.CompletedTask);
+    }
+
+    private async void OnClosing(object? sender, CancelEventArgs e)
+    {
+        if (closing)
+        {
+            e.Cancel = true;
+            return;
+        }
+
+        if (operation is null && !session.HasPendingCleanup)
+        {
+            closing = true;
+            updateTimer.Stop();
+            lifetime.Cancel();
+            session.Dispose();
+            return;
+        }
+
+        e.Cancel = true;
+        closing = true;
         RenderControls();
+        SetStatus("Завершение подключения", "Останавливаем пресет и восстанавливаем службу zapret…");
+        operation?.Cancel();
+        await Task.Yield();
+        if (operationFinished is { } pending)
+            await pending.Task;
+
+        activePreset = null;
+        ShowChecks(null);
+        bool finished = await FinishSessionAsync();
+        closing = false;
+        if (finished)
+            Close();
+        else
+            RenderControls();
+    }
+
+    private async Task<bool> FinishSessionAsync()
+    {
+        if (!session.HasPendingCleanup)
+            return true;
+        try
+        {
+            if (await session.EndAsync())
+                Log("Служба zapret снова запущена.");
+            return true;
+        }
+        catch (Exception error)
+        {
+            SetStatus("Не удалось завершить подключение", error.Message);
+            Report("Восстановление подключения", error);
+            return false;
+        }
     }
 
     private async Task RunAsync(Func<CancellationToken, Task> action, bool search = false)
@@ -349,6 +405,8 @@ public partial class MainWindow : Window
         if (operation is not null || closing)
             return;
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        var finished = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        operationFinished = finished;
         operation = cancellation;
         searching = search;
         RenderControls();
@@ -359,8 +417,6 @@ public partial class MainWindow : Window
             {
                 if (activePreset is null)
                 {
-                    try { session.Stop(); }
-                    catch (Exception stopError) { Report("Остановка", stopError); }
                     if (cancellation.IsCancellationRequested)
                     {
                         ShowChecks(null);
@@ -375,8 +431,15 @@ public partial class MainWindow : Window
         }
         finally
         {
-            operation = null;
             searching = false;
+            if (!closing && activePreset is null)
+            {
+                RenderControls();
+                await FinishSessionAsync();
+            }
+            operation = null;
+            operationFinished = null;
+            finished.SetResult();
             if (!closing)
                 RenderControls();
         }
@@ -524,16 +587,17 @@ public partial class MainWindow : Window
 
     private void RenderControls()
     {
-        bool busy = operation is not null;
+        bool busy = closing || operation is not null;
         bool connected = activePreset is not null;
+        bool restoring = !connected && session.HasPendingCleanup;
         PrimaryButton.Content = searching ? "Отменить подбор" : connected ? "Остановить" :
-            engine is null ? "Установить и подобрать" : "Подобрать и включить";
-        PrimaryButton.IsEnabled = searching || (!busy &&
-            (engine is not null || local is not null || embedded is not null || !checking));
-        TargetBox.IsEnabled = !busy && !connected;
-        PresetBox.IsEnabled = ManualButton.IsEnabled = engine is not null && !busy && !connected;
+            restoring ? "Повторить восстановление" : engine is null ? "Установить и подобрать" : "Подобрать и включить";
+        PrimaryButton.IsEnabled = !closing && (searching || (!busy &&
+            (restoring || engine is not null || local is not null || embedded is not null || !checking)));
+        TargetBox.IsEnabled = !busy && !connected && !restoring;
+        PresetBox.IsEnabled = ManualButton.IsEnabled = engine is not null && !busy && !connected && !restoring;
         UpdateButton.IsEnabled = !busy && !checking;
-        LocalEngineButton.IsEnabled = !busy && !connected;
+        LocalEngineButton.IsEnabled = !busy && !connected && !restoring;
         UpdateButton.Content = AvailableUpdate is { } update ? $"Установить {update.Tag}" : "Проверить обновления";
         Progress.IsIndeterminate = busy;
         Progress.Visibility = busy ? Visibility.Visible : Visibility.Hidden;

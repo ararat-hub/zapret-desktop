@@ -11,8 +11,8 @@
 
 1. [MainWindow](../src/ZapretDesktop/MainWindow.xaml.cs) читает настройки и текущую версию движка. По запросу пользователя запускает копию приложения через Windows UAC для установки или запуска движка. Windows показывает системный запрос, когда требуются административные права.
 2. [EngineStore и PresetParser](../src/ZapretDesktop/EngineFiles.cs) читают аргументы из строки запуска winws.exe в штатных файлах general*.bat. [EngineSession](../src/ZapretDesktop/EngineSession.cs) передаёт каждый аргумент напрямую дочернему процессу. Используются исходные значения Flowseal для выключенного Game Filter.
-3. [Connectivity](../src/ZapretDesktop/Connectivity.cs) проверяет публичный API Discord и получение Hello от Gateway по WebSocket. Для YouTube проверяются доступность сайта и загрузка JPEG с i.ytimg.com. Запросы выполняются анонимно. [PresetSelection](../src/ZapretDesktop/PresetSelection.cs) измеряет исходное соединение, запускает один пресет за раз и оставляет активным первый пресет, при котором выбранные сервисы прошли обе проверки.
-4. Дочерний процесс помещается в Windows Job Object. При остановке кнопкой приложение завершает свой winws.exe. При выходе закрывается Job Object.
+3. Перед проверкой исходного соединения [LegacyZapretService](../src/ZapretDesktop/LegacyZapretService.cs) останавливает службу `zapret`, если та запущена. [Connectivity](../src/ZapretDesktop/Connectivity.cs) анонимно проверяет API Discord и получение Hello от Gateway по WebSocket, а для YouTube проверяет сайт и загрузку JPEG с i.ytimg.com. [PresetSelection](../src/ZapretDesktop/PresetSelection.cs) запускает один пресет за раз и оставляет активным первый, при котором выбранные сервисы прошли обе проверки.
+4. Дочерний процесс помещается в Windows Job Object. При завершении подключения приложение сначала останавливает свой `winws.exe`, затем запускает службу `zapret`, если само её остановило. При обычном закрытии окна приложение ждёт завершения этих действий.
 
 ## Обновление движка
 

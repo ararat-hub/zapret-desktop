@@ -10,6 +10,7 @@ internal sealed class EngineSession : IDisposable
 {
     private Process? process;
     private SafeFileHandle? job;
+    private LegacyZapretService? legacy;
     public event Action<Process>? Exited;
 
     public static void EnsureNoOtherEngine()
@@ -18,8 +19,7 @@ internal sealed class EngineSession : IDisposable
         try
         {
             if (running.Length != 0)
-                throw new InvalidOperationException("Уже работает другой winws.exe. Если это старая служба Zapret, " +
-                    "временно остановите службу zapret в «Службах» Windows и повторите подбор.");
+                throw new InvalidOperationException("Уже работает другой winws.exe. Закройте другой Zapret и повторите попытку.");
         }
         finally
         {
@@ -28,8 +28,30 @@ internal sealed class EngineSession : IDisposable
         }
     }
 
+    public async Task<bool> SuspendLegacyServiceAsync(CancellationToken token)
+    {
+        token.ThrowIfCancellationRequested();
+        legacy = await Task.Run(LegacyZapretService.Open);
+        return legacy is { } service && await Task.Run(() => service.StopIfRunning(token));
+    }
+
+    public bool HasPendingCleanup => process is not null || legacy is not null;
+
+    public async Task<bool> EndAsync()
+    {
+        Stop();
+        if (legacy is not { } service)
+            return false;
+
+        bool restored = await Task.Run(service.Restore);
+        service.Dispose();
+        legacy = null;
+        return restored;
+    }
+
     public async Task StartAsync(EngineFiles engine, Preset preset, CancellationToken token)
     {
+        token.ThrowIfCancellationRequested();
         Stop();
         EnsureNoOtherEngine();
         string bin = Path.Combine(engine.Root, "bin");
@@ -72,24 +94,24 @@ internal sealed class EngineSession : IDisposable
     public void Stop()
     {
         var child = process;
-        process = null;
         if (child is null)
             return;
-        using (child)
+        if (!child.HasExited)
         {
-            if (child.HasExited)
-                return;
             try { child.Kill(); }
             catch (InvalidOperationException) when (child.HasExited) { }
             if (!child.WaitForExit(1500))
                 throw new InvalidOperationException("winws не остановился. Повторите попытку через несколько секунд.");
         }
+        process = null;
+        child.Dispose();
     }
 
     public void Dispose()
     {
         job?.Dispose();
         process?.Dispose();
+        legacy?.Dispose();
         process = null;
     }
 }
