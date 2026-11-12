@@ -50,12 +50,15 @@ foreach ($license in $licenseFiles) {
 }
 $noticesPath = Join-Path $cache.FullName 'ThirdPartyNotices.txt'
 [IO.File]::WriteAllText($noticesPath, ($notices -join [Environment]::NewLine))
+$startupLauncher = Join-Path $cache.FullName 'ZapretDesktopStartup.exe'
+& (Join-Path $PSScriptRoot 'BuildStartupLauncher.ps1') -OutputPath $startupLauncher
 
 $project = Join-Path $projectRoot 'src/ZapretDesktop/ZapretDesktop.csproj'
 $publishArgs = @(
     'publish', $project, '-c', 'Release', '-r', 'win-x64', '--self-contained', 'false',
     '-p:PublishSingleFile=true', '-p:EnableSingleFileAnalyzer=false', '-p:DebugType=None',
-    "-p:FlowsealArchive=$($engine.FullName)", "-p:ThirdPartyNotices=$noticesPath", '-o', $OutputDirectory
+    "-p:FlowsealArchive=$($engine.FullName)", "-p:ThirdPartyNotices=$noticesPath",
+    "-p:StartupLauncher=$startupLauncher", '-o', $OutputDirectory
 )
 dotnet @publishArgs
 if ($LASTEXITCODE -ne 0) { throw "dotnet publish failed ($LASTEXITCODE)." }

@@ -39,18 +39,15 @@ internal sealed class Preferences
         File.Move(temporary, SettingsPath, overwrite: true);
     }
 
-    public static bool HasAutostart()
+    public static bool HasLegacyAutostart()
     {
         using var key = Registry.CurrentUser.OpenSubKey(RunKey);
         return key?.GetValue(RunName) is string;
     }
 
-    public static void SetAutostart(bool enabled)
+    public static void RemoveLegacyAutostart()
     {
-        using var key = Registry.CurrentUser.CreateSubKey(RunKey);
-        if (enabled)
-            key.SetValue(RunName, $"\"{Environment.ProcessPath}\" --startup", RegistryValueKind.String);
-        else
-            key.DeleteValue(RunName, throwOnMissingValue: false);
+        using var key = Registry.CurrentUser.OpenSubKey(RunKey, writable: true);
+        key?.DeleteValue(RunName, throwOnMissingValue: false);
     }
 }

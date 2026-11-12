@@ -8,7 +8,7 @@ public partial class App : Application
     private Mutex? instance;
     private bool ownsInstance;
 
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         var args = e.Args;
@@ -23,19 +23,29 @@ public partial class App : Application
             args = args[2..];
         }
 
-        instance = new Mutex(false, @"Local\ZapretDesktop");
-        try { ownsInstance = instance.WaitOne(0); }
+        bool background = args is ["--startup" or "--login"];
+        try
+        {
+            instance = new Mutex(false, @"Local\ZapretDesktop");
+            ownsInstance = instance.WaitOne(0);
+        }
         catch (AbandonedMutexException) { ownsInstance = true; }
+        catch (UnauthorizedAccessException) { }
         if (!ownsInstance)
         {
-            if (!args.Contains("--startup"))
-                MessageBox.Show("Zapret Desktop уже открыт.", "Zapret Desktop");
+            if (!background)
+                MessageBox.Show("Zapret Desktop уже открыт. Если окно свёрнуто, откройте его через значок в трее.", "Zapret Desktop");
             Shutdown();
             return;
         }
 
-        MainWindow = new MainWindow(args);
-        MainWindow.Show();
+        var window = new MainWindow();
+        MainWindow = window;
+        if (background)
+            window.HideToTray();
+        else
+            window.Show();
+        await window.InitializeAsync(args);
     }
 
     protected override void OnExit(ExitEventArgs e)

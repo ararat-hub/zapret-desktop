@@ -1,5 +1,5 @@
 <Application x:Class="ZapretDesktop.App" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml" ShutdownMode="OnMainWindowClose">
   <Application.Resources>
     <SolidColorBrush x:Key="Canvas" Color="#101815"/>
     <SolidColorBrush x:Key="Surface" Color="#17231E"/>

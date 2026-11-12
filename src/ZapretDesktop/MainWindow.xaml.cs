@@ -1,10 +1,10 @@
 using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
-using System.Security;
 using System.Security.Principal;
 using System.Windows;
 using System.Windows.Controls;
+using System.Windows.Interop;
 using System.Windows.Media;
 using System.Windows.Threading;
 
@@ -23,6 +23,7 @@ public partial class MainWindow : Window
     private readonly LocalEngine? local = LocalEngine.Discover();
     private CancellationTokenSource? operation;
     private TaskCompletionSource? operationFinished;
+    private TrayIcon? tray;
     private EngineFiles? engine;
     private Release? offer;
     private string? activePreset;
@@ -31,7 +32,7 @@ public partial class MainWindow : Window
     private bool closing;
     private bool ready;
 
-    public MainWindow(string[] arguments)
+    public MainWindow()
     {
         using var identity = WindowsIdentity.GetCurrent();
         elevated = new WindowsPrincipal(identity).IsInRole(WindowsBuiltInRole.Administrator);
@@ -39,12 +40,7 @@ public partial class MainWindow : Window
         LicenseButton.Visibility = embedded is null ? Visibility.Collapsed : Visibility.Visible;
         TargetBox.SelectedIndex = (int)preferences.Targets;
         AutoUpdateBox.IsChecked = preferences.AutoCheck;
-        try { AutostartBox.IsChecked = Preferences.HasAutostart(); }
-        catch (Exception error) when (error is SecurityException or UnauthorizedAccessException or IOException)
-        {
-            AutostartBox.IsEnabled = false;
-            Report("Автозапуск недоступен", error);
-        }
+        RefreshAutostart();
         session.Exited += process => Dispatcher.BeginInvoke(() => OnEngineExit(process));
         updateTimer.Tick += async (_, _) =>
         {
@@ -64,13 +60,53 @@ public partial class MainWindow : Window
         }
         ready = true;
         RenderControls();
-        Loaded += async (_, _) =>
-        {
-            updateTimer.Start();
-            await ResumeActionAsync(arguments);
-            if (!closing && preferences.AutoCheck && offer is null)
-                await CheckUpdatesAsync();
-        };
+    }
+
+    internal async Task InitializeAsync(string[] arguments)
+    {
+        updateTimer.Start();
+        if (arguments is ["--startup"])
+            SetStatus("Автозапуск требует настройки", "Включите запуск последнего пресета в настройках.");
+        await ResumeActionAsync(arguments);
+        if (!closing && preferences.AutoCheck && offer is null)
+            await CheckUpdatesAsync();
+    }
+
+    internal void HideToTray()
+    {
+        if (closing)
+            return;
+        new WindowInteropHelper(this).EnsureHandle();
+        tray ??= new TrayIcon(() => Dispatcher.BeginInvoke(ShowFromTray), () => Dispatcher.BeginInvoke(Close));
+        tray.SetStatus(StatusTitle.Text);
+        tray.Visible = true;
+        if (IsVisible)
+            Hide();
+    }
+
+    private void ShowFromTray()
+    {
+        if (closing)
+            return;
+        if (WindowState == WindowState.Minimized)
+            WindowState = WindowState.Normal;
+        Show();
+        Activate();
+        if (tray is not null)
+            tray.Visible = false;
+    }
+
+    protected override void OnStateChanged(EventArgs e)
+    {
+        base.OnStateChanged(e);
+        if (WindowState == WindowState.Minimized)
+            HideToTray();
+    }
+
+    protected override void OnClosed(EventArgs e)
+    {
+        tray?.Dispose();
+        base.OnClosed(e);
     }
 
     private Task ResumeActionAsync(string[] args)
@@ -79,6 +115,8 @@ public partial class MainWindow : Window
             return Task.CompletedTask;
         return args switch
         {
+            ["--login"] => RunAsync(StartSavedPresetAsync),
+            ["--autostart-on" or "--autostart-off", var sid] => SetAutostartAsync(sid, args[0] == "--autostart-on"),
             ["--connect"] => RunAsync(SelectPresetAsync, search: true),
             ["--manual", var name] => RunAsync(token => StartManualAsync(name, token)),
             ["--local-install" or "--local-connect", var path, var tag, var digest] =>
@@ -296,26 +334,47 @@ public partial class MainWindow : Window
         token.ThrowIfCancellationRequested();
         if (match is { } selected)
         {
+            RememberWorkingPreset(selected.Preset);
             SetConnected(current, selected.Preset, "Проверки выбранных сервисов пройдены.");
             return;
         }
         SetStatus("Пресет не найден", "Выберите один сервис, проверьте журнал или запустите пресет вручную.");
     }
 
-    private async Task StartManualAsync(string name, CancellationToken token)
+    private Task StartManualAsync(string name, CancellationToken token)
     {
         var current = engine ?? throw new InvalidOperationException("Сначала установите движок.");
         var preset = current.Presets.FirstOrDefault(preset => preset.Name == name) ??
             throw new InvalidOperationException("Этот пресет отсутствует в установленной версии.");
+        return StartPresetAsync(current, preset, fromLogon: false, token);
+    }
+
+    private async Task StartSavedPresetAsync(CancellationToken token)
+    {
+        if (engine is not { } current || current.Presets.FirstOrDefault(p => p.Name == preferences.LastPreset) is not { } preset)
+        {
+            SetStatus("Нет сохранённого пресета", "Откройте окно и один раз выполните подбор.");
+            Log("Автозапуск · сохранённый пресет отсутствует в текущей версии движка.");
+            return;
+        }
+
+        await Task.Run(() => StartupTask.CheckEngineFiles(current), token);
+        await StartPresetAsync(current, preset, fromLogon: true, token);
+    }
+
+    private async Task StartPresetAsync(EngineFiles current, Preset preset, bool fromLogon, CancellationToken token)
+    {
         ShowChecks(null);
         await SuspendLegacyServiceAsync(token);
         await session.StartAsync(current, preset, token);
-        SetConnected(current, preset, "Пресет запущен вручную.");
+        SetConnected(current, preset, fromLogon ? "Пресет запущен при входе в Windows." : "Пресет запущен вручную.");
         var result = await Connectivity.CheckAsync(preferences.Targets, token);
         if (session.IsRunning)
         {
             ShowChecks(result);
             Log($"{preset.Name} · {result}");
+            if (!fromLogon && result.Passed)
+                RememberWorkingPreset(preset);
         }
     }
 
@@ -329,10 +388,17 @@ public partial class MainWindow : Window
     private void SetConnected(EngineFiles current, Preset preset, string detail)
     {
         activePreset = preset.Name;
-        preferences.LastPreset = preset.Name;
-        SavePreferences();
         SetStatus("Включено", $"{preset.Name} · Zapret {current.Tag}\n{detail}", connected: true);
         Log($"Запущен {preset.Name} · Zapret {current.Tag}.");
+    }
+
+    private void RememberWorkingPreset(Preset preset)
+    {
+        bool first = preferences.LastPreset is null;
+        preferences.LastPreset = preset.Name;
+        SavePreferences();
+        if (first && AutostartBox.IsChecked == true)
+            RefreshAutostart();
     }
 
     private async void OnEngineExit(Process process)
@@ -526,14 +592,52 @@ public partial class MainWindow : Window
         SavePreferences();
     }
 
-    private void AutostartClick(object sender, RoutedEventArgs e)
+    private async void AutostartClick(object sender, RoutedEventArgs e)
     {
-        try { Preferences.SetAutostart(AutostartBox.IsChecked == true); }
+        bool enable = AutostartBox.IsChecked == true;
+        string sid = StartupTask.UserSid();
+        if (EnsureElevated(enable ? "--autostart-on" : "--autostart-off", sid))
+            await SetAutostartAsync(sid, enable);
+        else if (!closing)
+            RefreshAutostart();
+    }
+
+    private Task SetAutostartAsync(string sid, bool enable) => RunAsync(async _ =>
+    {
+        string? failure = null;
+        try
+        {
+            await Task.Run(() => StartupTask.SetEnabled(sid, enable));
+            Log(enable ? "Автозапуск пресета включён." : "Автозапуск пресета выключен.");
+        }
         catch (Exception error)
         {
-            AutostartBox.IsChecked = AutostartBox.IsChecked != true;
+            failure = "Не удалось настроить автозапуск. Подробности в журнале.";
             Report("Автозапуск", error);
         }
+        if (!closing)
+            RefreshAutostart(failure);
+    });
+
+    private void RefreshAutostart(string? hint = null)
+    {
+        try
+        {
+            bool enabled = StartupTask.IsEnabled(StartupTask.UserSid());
+            AutostartBox.IsChecked = enabled;
+            if (!enabled && Preferences.HasLegacyAutostart())
+                hint ??= "Включите автозапуск заново для запуска пресета.";
+            else if (enabled && preferences.LastPreset is null)
+                hint ??= "Сначала подберите рабочий пресет.";
+        }
+        catch (Exception error)
+        {
+            hint ??= "Не удалось проверить автозапуск. Подробности в журнале.";
+            Report("Автозапуск", error);
+        }
+
+        AutostartHint.Text = hint;
+        AutostartHint.Visibility = hint is null ? Visibility.Collapsed : Visibility.Visible;
     }
 
     private async void AutoUpdateClick(object sender, RoutedEventArgs e)
@@ -567,6 +671,7 @@ public partial class MainWindow : Window
         StatusTitle.Text = title;
         StatusText.Text = detail;
         StatusDot.Fill = (Brush)FindResource(connected ? "Accent" : "Muted");
+        tray?.SetStatus(title);
     }
 
     private void ShowChecks(ProbeResult? result)
@@ -598,6 +703,7 @@ public partial class MainWindow : Window
         PresetBox.IsEnabled = ManualButton.IsEnabled = engine is not null && !busy && !connected && !restoring;
         UpdateButton.IsEnabled = !busy && !checking;
         LocalEngineButton.IsEnabled = !busy && !connected && !restoring;
+        AutostartBox.IsEnabled = !busy;
         UpdateButton.Content = AvailableUpdate is { } update ? $"Установить {update.Tag}" : "Проверить обновления";
         Progress.IsIndeterminate = busy;
         Progress.Visibility = busy ? Visibility.Visible : Visibility.Hidden;
